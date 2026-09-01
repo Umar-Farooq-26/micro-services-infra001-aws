@@ -116,6 +116,7 @@ jobs:
         if: steps.plan.outcome == 'failure'
         run: exit 1
 
+
   terraform-apply:
     name: 'Terraform Apply'
     needs: terraform-plan
