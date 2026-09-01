@@ -151,6 +151,7 @@ jobs:
           name: tfplan
           path: ${{ env.TF_WORKING_DIR }}
 
+
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -input=false tfplan
