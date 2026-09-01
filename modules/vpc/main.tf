@@ -95,18 +95,18 @@ resource "aws_iam_role" "flow_logs" {
   tags = var.tags
 }
 
+# tfsec:ignore:aws-iam-no-policy-wildcards
+# The trailing ":*" on the log group ARN in the WriteToLogStreams statement
+# below is the AWS-documented pattern for VPC Flow Log delivery roles (see
+# AWS docs: "Publish flow logs to CloudWatch Logs" IAM role example).
+# CreateLogStream/PutLogEvents operate on log streams *within* the group,
+# which the API requires addressing via a wildcarded resource; scoping this
+# to the exact resolved ARN, minus the blanket "*" elsewhere in the account,
+# is the tightest this can be without breaking flow log delivery.
 resource "aws_iam_role_policy" "flow_logs" {
   name = "${var.name}-vpc-flow-logs"
   role = aws_iam_role.flow_logs.id
 
-  # tfsec:ignore:aws-iam-no-policy-wildcards
-  # The trailing ":*" on the log group ARN is the AWS-documented pattern for
-  # VPC Flow Log delivery roles (see AWS docs: "Publish flow logs to
-  # CloudWatch Logs" IAM role example). CreateLogStream/PutLogEvents operate
-  # on log streams *within* the group, which the API requires addressing via
-  # a wildcarded resource; scoping this to the exact resolved ARN, minus the
-  # blanket "*" elsewhere in the account, is the tightest this can be without
-  # breaking flow log delivery.
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
