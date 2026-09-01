@@ -24,11 +24,61 @@ resource "aws_flow_log" "this" {
   tags = merge(var.tags, { Name = "${var.name}-flow-logs" })
 }
 
+resource "aws_kms_key" "flow_logs" {
+  description             = "CMK for encrypting ${var.name} VPC flow log group"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowAccountAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowCloudWatchLogsUse"
+        Effect = "Allow"
+        Principal = {
+          Service = "logs.${data.aws_region.current.name}.amazonaws.com"
+        }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/vpc/${var.name}/flow-logs"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(var.tags, { Name = "${var.name}-flow-logs-kms" })
+}
+
+resource "aws_kms_alias" "flow_logs" {
+  name          = "alias/${var.name}-flow-logs"
+  target_key_id = aws_kms_key.flow_logs.key_id
+}
+
 resource "aws_cloudwatch_log_group" "flow_logs" {
   name              = "/aws/vpc/${var.name}/flow-logs"
   retention_in_days = 30
+  kms_key_id        = aws_kms_key.flow_logs.arn
   tags              = var.tags
 }
+
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "aws_iam_role" "flow_logs" {
   name = "${var.name}-vpc-flow-logs"
@@ -49,19 +99,35 @@ resource "aws_iam_role_policy" "flow_logs" {
   name = "${var.name}-vpc-flow-logs"
   role = aws_iam_role.flow_logs.id
 
+  # tfsec:ignore:aws-iam-no-policy-wildcards
+  # The trailing ":*" on the log group ARN is the AWS-documented pattern for
+  # VPC Flow Log delivery roles (see AWS docs: "Publish flow logs to
+  # CloudWatch Logs" IAM role example). CreateLogStream/PutLogEvents operate
+  # on log streams *within* the group, which the API requires addressing via
+  # a wildcarded resource; scoping this to the exact resolved ARN, minus the
+  # blanket "*" elsewhere in the account, is the tightest this can be without
+  # breaking flow log delivery.
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams"
-      ]
-      Resource = "${aws_cloudwatch_log_group.flow_logs.arn}:*"
-    }]
+    Statement = [
+      {
+        Sid      = "CreateLogGroupScoped"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = aws_cloudwatch_log_group.flow_logs.arn
+      },
+      {
+        Sid    = "WriteToLogStreams"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "${aws_cloudwatch_log_group.flow_logs.arn}:*"
+      }
+    ]
   })
 }
 
